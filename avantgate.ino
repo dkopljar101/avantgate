@@ -1,4 +1,4 @@
-// main.ino
+// avantgate.ino
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Preferences.h>
@@ -10,18 +10,58 @@
 #define BUTTON_PIN      0    // K1 enters Setup Mode
 #define BUTTON_HOLD_MS 4000  // hold time in ms
 
+// Relay control
+#define RELAY1      2    // GPIO pin for relay 1 control
+#define RELAY2      4    // GPIO pin for relay 2 control
+#define PULSE_DEFAULT 70  // relay pulse time in 1/10 seconds
+
 // Global objects and settings
 Preferences prefs;
 WiFiClientSecure secureClient;
 PubSubClient mqtt(secureClient);
 bool setupMode = false;
+// Global config variables
+String wifiSsid, wifiPass, mqttHost, mqttUser, mqttPass;
+String caCert;
+uint16_t mqttPort;
+unsigned int PULSE_ds = PULSE_DEFAULT;
+
 
 // MQTT prefix and identifiers
 static const char* tPrefix = "avant/";
 static const char* gateName = "avant0001";
-static const char* defaultCACert = R"EOF(
------BEGIN CERTIFICATE-----
-...PEM CONTENT...
+// Global CA certificate buffer (empty by default)
+// LetsEncrypt Root CA as default certificate
+static const char* defaultCACert = R"EOF(-----BEGIN CERTIFICATE-----
+MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw
+TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh
+cmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4
+WhcNMzUwNjA0MTEwNDM4WjBPMQswCQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJu
+ZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBY
+MTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAK3oJHP0FDfzm54rVygc
+h77ct984kIxuPOZXoHj3dcKi/vVqbvYATyjb3miGbESTtrFj/RQSa78f0uoxmyF+
+0TM8ukj13Xnfs7j/EvEhmkvBioZxaUpmZmyPfjxwv60pIgbz5MDmgK7iS4+3mX6U
+A5/TR5d8mUgjU+g4rk8Kb4Mu0UlXjIB0ttov0DiNewNwIRt18jA8+o+u3dpjq+sW
+T8KOEUt+zwvo/7V3LvSye0rgTBIlDHCNAymg4VMk7BPZ7hm/ELNKjD+Jo2FR3qyH
+B5T0Y3HsLuJvW5iB4YlcNHlsdu87kGJ55tukmi8mxdAQ4Q7e2RCOFvu396j3x+UC
+B5iPNgiV5+I3lg02dZ77DnKxHZu8A/lJBdiB3QW0KtZB6awBdpUKD9jf1b0SHzUv
+KBds0pjBqAlkd25HN7rOrFleaJ1/ctaJxQZBKT5ZPt0m9STJEadao0xAH0ahmbWn
+OlFuhjuefXKnEgV4We0+UXgVCwOPjdAvBbI+e0ocS3MFEvzG6uBQE3xDk3SzynTn
+jh8BCNAw1FtxNrQHusEwMFxIt4I7mKZ9YIqioymCzLq9gwQbooMDQaHWBfEbwrbw
+qHyGO0aoSCqI3Haadr8faqU9GY/rOPNk3sgrDQoo//fb4hVC1CLQJ13hef4Y53CI
+rU7m2Ys6xt0nUW7/vGT1M0NPAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNV
+HRMBAf8EBTADAQH/MB0GA1UdDgQWBBR5tFnme7bl5AFzgAiIyBpY9umbbjANBgkq
+hkiG9w0BAQsFAAOCAgEAVR9YqbyyqFDQDLHYGmkgJykIrGF1XIpu+ILlaS/V9lZL
+ubhzEFnTIZd+50xx+7LSYK05qAvqFyFWhfFQDlnrzuBZ6brJFe+GnY+EgPbk6ZGQ
+3BebYhtF8GaV0nxvwuo77x/Py9auJ/GpsMiu/X1+mvoiBOv/2X/qkSsisRcOj/KK
+NFtY2PwByVS5uCbMiogziUwthDyC3+6WVwW6LLv3xLfHTjuCvjHIInNzktHCgKQ5
+ORAzI4JMPJ+GslWYHb4phowim57iaztXOoJwTdwJx4nLCgdNbOhdjsnvzqvHu7Ur
+TkXWStAmzOVyyghqpZXjFaH3pO3JLF+l+/+sKAIuvtd7u+Nxe5AW0wdeRlN8NwdC
+jNPElpzVmbUq4JUagEiuTDkHzsxHpFKVK7q4+63SM1N95R1NbdWhscdCb+ZAJzVc
+oyi3B43njTOQ5yOf+1CceWxG1bQVs5ZufpsMljq4Ui0/1lvh+wjChP4kqKOJ2qxq
+4RgqsahDYVvTH9w7jXbyLeiNdd8XM2w9U/t7y0Ff/9yi0GE44Za4rF2LN9d11TPA
+mRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d
+emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 -----END CERTIFICATE-----
 )EOF";
 
@@ -32,15 +72,54 @@ void startSetupMode();
 void startNormalMode();
 void listSPIFFS();
 void mqttCallback(char* topic, uint8_t* payload, unsigned int length);
+void pulseRelay(uint8_t gpioPin); // pulses relay for PULSE_ds
+
+// Load all preferences into global variables
+void loadPrefs() {
+  wifiSsid  = prefs.getString("ssid", "");
+  wifiPass  = prefs.getString("pass", "");
+  mqttHost  = prefs.getString("mqttHost", "");
+  mqttPort  = prefs.getUInt("mqttPort", 8883);
+  mqttUser  = prefs.getString("mqttUser", "");
+  mqttPass  = prefs.getString("mqttPass", "");
+  PULSE_ds  = prefs.getUInt("PULSE_ds", PULSE_DEFAULT);
+  if (PULSE_ds == 0) PULSE_ds = PULSE_DEFAULT;
+  
+  // Load CA certificate from SPIFFS or use default
+  if (SPIFFS.exists("/ca_cert.pem")) {
+    File f = SPIFFS.open("/ca_cert.pem", "r");
+    caCert = f.readString();
+    f.close();
+  } else {
+    caCert = defaultCACert;
+  }
+
+}
 
 // MQTT callback implementation
-auto mqttCallbackPtr = mqttCallback;
 void mqttCallback(char* topic, uint8_t* payload, unsigned int length) {
-  Serial.print("MQTT Message on topic: ");
-  Serial.println(topic);
-  Serial.print("Payload: ");
-  for (unsigned int i = 0; i < length; i++) Serial.print((char)payload[i]);
-  Serial.println();
+  Serial.print("MQTT Message on topic: "); Serial.println(topic); // for debugging
+  // parse Topic
+  String tStr = String(topic);
+  int cmdIdx = tStr.indexOf("/cmd/");
+  String wTopic;
+  if (cmdIdx >= 0) {
+    wTopic = tStr.substring(cmdIdx + 5); // 5 is the length of "/cmd/"
+    wTopic.trim(); // remove any leading/trailing whitespace
+    Serial.print("wTopic: "); Serial.println(wTopic);
+    if (wTopic.equals("opengate1")) {
+      Serial.println("Opening Gate 1");
+      pulseRelay(RELAY1);
+    } else if (wTopic.equals("opengate2")) {
+      Serial.println("Opening Gate 2");
+      pulseRelay(RELAY2);
+    } else {
+      Serial.print("Unknown command: ");
+      Serial.println(wTopic);
+    }
+  } else {
+    Serial.println("wTopic: '/cmd/' not found in topic");
+  }
 }
 
 void setup() {
@@ -56,7 +135,8 @@ void setup() {
 
   prefs.begin("cfg", false);
   checkButton();
-
+  loadPrefs(); // <--- load all config values
+  Serial.println("Loaded preferences:");
   if (!hasConfig() || setupMode) {
     startSetupMode();
   } else {
@@ -76,6 +156,7 @@ void loop() {
 }
 
 bool hasConfig() {
+  // Check if all required configuration parameters are set
   return prefs.getString("ssid", "").length()
       && prefs.getString("pass", "").length()
       && prefs.getString("mqttHost", "").length()
@@ -93,18 +174,14 @@ void startSetupMode() {
   // Serve configuration page
   server.on("/", HTTP_GET, [&server]() {
     // Load existing values
-    String ssidV = prefs.getString("ssid", "");
-    String passV = prefs.getString("pass", "");
-    String hostV = prefs.getString("mqttHost", "");
-    String portV = String(prefs.getUInt("mqttPort", 8883));
-    String userV = prefs.getString("mqttUser", "");
-    String passM = prefs.getString("mqttPass", "");
-    String pulseV= String(prefs.getUInt("PULSE_ds", 10));
-    String caV;
-    if (SPIFFS.exists("/ca_cert.pem")) {
-      File f = SPIFFS.open("/ca_cert.pem","r"); caV = f.readString(); f.close();
-    } else caV = defaultCACert;
-
+    String caV = caCert;
+    String ssidV = wifiSsid:
+    String passV = wifiPass;
+    String hostV = mqttHost;
+    String portV = String(mqttPort);
+    String userV = mqttUser;
+    String passM = mqttPass;
+    String pulseV = String(PULSE_ds);
     // Build HTML
     String html = R"rawliteral(
 <!DOCTYPE html><html><head><meta charset="UTF-8"><title>Setup</title><style>
@@ -170,11 +247,9 @@ void startNormalMode() {
   while (WiFi.status() != WL_CONNECTED && millis() - t0 < 20000) delay(100);
   if (WiFi.status() != WL_CONNECTED) { listSPIFFS(); ESP.restart(); }
 
-  // Load CA cert
-  if (SPIFFS.exists("/ca_cert.pem")) {
-    File f = SPIFFS.open("/ca_cert.pem","r"); secureClient.setCACert(f.readString().c_str()); f.close();
-  } else secureClient.setCACert(defaultCACert);
-
+  // MQTT set CA cert
+  secureClient.setCACert(caCert.c_str());
+  
   // Setup MQTT
   mqtt.setCallback(mqttCallback);
   mqtt.setServer(prefs.getString("mqttHost").c_str(), prefs.getUInt("mqttPort"));
@@ -198,4 +273,12 @@ void listSPIFFS() {
   Serial.println("SPIFFS files:");
   File root = SPIFFS.open("/"); File f = root.openNextFile();
   while (f) { Serial.println(f.name()); f = root.openNextFile(); }
+}
+
+// Function to pulse a relay: turns GPIO on, waits PULSE_ds*100 ms, then turns it off
+void pulseRelay(uint8_t gpioPin) {
+  pinMode(gpioPin, OUTPUT);
+  digitalWrite(gpioPin, HIGH);
+  delay(PULSE_ds*100); // PULSE_ds is in 1/10 seconds, so multiply by 100 for milliseconds
+  digitalWrite(gpioPin, LOW);
 }
